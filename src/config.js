@@ -36,6 +36,11 @@ entorno.CLIENT_ID_GOOGLEAUTH = process.env.CLIENT_ID_GOOGLEAUTH;
 entorno.CLIENT_SECRET_GOOGLE = process.env.CLIENT_SECRET_GOOGLE;
 entorno.CALL_BACK_URL_GOOGLE = process.env.CALL_BACK_URL_GOOGLE;
 
+entorno.APIKEY_FIREBASE = process.env.APIKEY_FIREBASE;
+entorno.SENDER_ID = process.env.SENDER_ID;
+entorno.APPID = process.env.APPID;
+entorno.MEASUREMENTID = process.env.MEASUREMENTID;
+
 
 /* export default {
   port: process.env.PORT,

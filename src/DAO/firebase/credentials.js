@@ -1,16 +1,17 @@
 // Importamos la función para inicializar la aplicación de Firebase
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
+import { entorno } from "../../config";
 
 // Añade aquí tus credenciales
 const firebaseConfig = {
-    apiKey: "AIzaSyCPFG0wLhE2eZ3qfzHVS9UdnvkXh3lV7mM",
+    apiKey: `${entorno.APIKEY_FIREBASE}`,
     authDomain: "ciclopista.firebaseapp.com",
     projectId: "ciclopista",
     storageBucket: "ciclopista.appspot.com",
-    messagingSenderId: "797905124061",
-    appId: "1:797905124061:web:5f94af70f0925e8732f934",
-    measurementId: "G-YZNHY1P4NV"
+    messagingSenderId: `${entorno.SENDER_ID}`,
+    appId: `${entorno.APPID}`,
+    measurementId: `${entorno.MEASUREMENTID}`
 };
 
 // Inicializamos la aplicación y la guardamos en firebaseApp

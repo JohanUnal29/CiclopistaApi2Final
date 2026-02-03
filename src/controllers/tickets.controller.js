@@ -156,27 +156,24 @@ class TicketController {
   async addTicket(req, res) {
     try {
       const cop = "COP";
-      const SecretoSeguridad = entorno.SecretoSeguridad
+      const SecretoSeguridad = entorno.SecretoSeguridad;
 
       const ticket = req.body;
 
       let ticketCode = uuidv4().toString();
-      let ticketCodeMongo = await ticketsModel
-        .findOne({ code: ticketCode })
-        .lean();
+      let ticketCodeMongo = await ticketsModel.findOne({ code: ticketCode }).lean();
 
-      while (ticketCode == ticketCodeMongo) {
+      while (ticketCodeMongo) {
         ticketCode = uuidv4().toString();
-        ticketCodeMongo = await ticketsModel
-          .findOne({ code: ticketCode })
-          .lean();
+        ticketCodeMongo = await ticketsModel.findOne({ code: ticketCode }).lean();
       }
 
       const updatedCart = [];
       for (const cartItem of ticket.cart) {
         const product = await productService.getProductById(cartItem._id);
+
         if (product && product.stock >= cartItem.cantidad) {
-          // await ticketService.updateProducts(cartItem._id, cartItem.cantidad);
+          // Si aquí descontabas stock antes, lo dejaste comentado, ok
           updatedCart.push(cartItem);
         } else {
           return res.status(400).send({
@@ -190,197 +187,127 @@ class TicketController {
       const ticketDTO = new TicketDTO(ticketCode, ticket, updatedCart);
       await ticketService.addTicket(ticketDTO);
 
+      // ✅ Generar PDF EN MEMORIA (Buffer) y enviar correo
       try {
-        // var cadenaConcatenada = ticketDTO.code + (ticketDTO.amount * 100) + cop + SecretoSeguridad;
-        // //Ejemplo
-        // console.log("cadena: " + cadenaConcatenada);
-        // const hashHex = crypto.createHash('sha256').update(cadenaConcatenada).digest('hex');
-        // console.log("HASH: " + hashHex);
+        const pdfBuffer = await generarPDF(ticketDTO);
 
+        const result = await transport.sendMail({
+          from: entorno.GOOGLE_MAIL,
+          to: `${ticketDTO.purchaser},${entorno.GOOGLE_MAIL_SELLER}`,
+          subject: "¡Recibimos tu pedido!",
+          html: `
+          <html>
+            <head>
+              <style>
+                body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f6f6f6; }
+                .container { width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
+                .header { text-align: center; padding-bottom: 20px; }
+                .header img { max-width: 30%; height: auto; }
+                .stage { text-align: center; padding-bottom: 20px; }
+                .stage img { max-width: 65%; height: auto; }
+                .content { padding: 20px 0; }
+                .content p { margin: 10px 0; }
+                .highlight { color: #e74c3c; font-weight: bold; font-size: 18px; text-align: center; }
+                .footer { text-align: center; font-size: 18px; color: #777777; padding-top: 20px; }
+                .social-icons a { margin: 10px; color: #000; text-decoration: none; }
+                .iconos { width: 30px; height: 30px; }
+                .contact { margin-top: 20px; }
+                .saludo { font-size: 18px; }
+                .medio { font-size: 15px; text-align: justify; }
 
-        (async () => {
-          try {
-            const pdfPath = await generarPDF(ticketDTO);
-            const result = await transport.sendMail({
-              from: entorno.GOOGLE_MAIL,
-              to: `${ticketDTO.purchaser},${entorno.GOOGLE_MAIL_SELLER}`, // Cambia esto a una dirección de correo válida para la prueba
-              subject: '¡Recibimos tu pedido!',
-              html: `
-                  <html>
-                    <head>
-                      <style>
-                        body {
-                          font-family: Arial, sans-serif;
-                          margin: 0;
-                          padding: 0;
-                          background-color: #f6f6f6;
-                        }
-                        .container {
-                          width: 100%;
-                          max-width: 600px;
-                          margin: 0 auto;
-                          background-color: #ffffff;
-                          padding: 20px;
-                          border-radius: 8px;
-                          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-                        }
-                        .header {
-                          text-align: center;
-                          padding-bottom: 20px;
-                        }
-                        .stage img {
-                          max-width: 65%;
-                          height: auto;
-                        }
-                        .stage {
-                          text-align: center;
-                          padding-bottom: 20px;
-                        }
-                        .header img {
-                          max-width: 30%;
-                          height: auto;
-                        }
-                        .content {
-                          padding: 20px 0;
-                        }
-                        .content p {
-                          margin: 10px 0;
-                        }
-                        .highlight {
-                          color: #e74c3c;
-                          font-weight: bold;
-                          font-size: 18px;
-                          text-align: center;
-                        }
-                        .footer {
-                          text-align: center;
-                          font-size: 18px;
-                          color: #777777;
-                          padding-top: 20px;
-                        }
-                        
-                        .social-icons a {
-                          margin: 10px;
-                          color: #000;
-                          text-decoration: none;
-                        }
-                        .iconos {
-                          width: 30px;
-                          height: 30px;
-                        }
-                        .contact {
-                          margin-top: 20px;
-                        }.saludo {
-                          font-size: 18px;
-                        }.medio{
-                          font-size: 15px;
-                          text-align: justify;
-                        }
-
-                        @media (max-width: 600px) {
-                          .container {
-                            padding: 10px;
-                            width: 500px;
-                          }
-                          .content, .footer {
-                            padding: 10px 0;
-                          }
-                          .social-icons a {
-                            margin: 5px;
-                          }
-                        }
-
-                        @media (max-width: 400px) {
-                          .container {
-                            padding: 10px;
-                            width: 400px;
-                          }
-                          .highlight {
-                            font-size: 14px;
-                          }
-                          .footer {
-                            font-size: 16px;
-                          }
-                          .contact {
-                          margin-top: 18px;
-                          }
-                          .saludo {
-                          font-size: 16px;
-                          }
-                          .medio{
-                          font-size: 13px;
-                          }
-                        }
-                      </style>
-                      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" integrity="sha384-k6RqeWeci5ZR/Lv4MR0sA0FfDOMW1W4hfM2ne8u3R6jt4XS5fPt6B0hFSkPaB4Qx" crossorigin="anonymous">
-                    </head>
-                    <body>
-                      <div class="container">
-                        <div class="header">
-                          <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Fcplogo%20rojo%20registrado%20R%20m%C3%A1s%20grande%20(1).png?alt=media&token=68739185-9438-4bf9-ac31-9b43b3fa9c87" alt="Ciclopista Logo">
-                        </div>
-                        <div class="content">
-                          <p class="saludo"><strong>¡Hola, ${ticketDTO.name}!</strong></p>
-                          <p class="medio">Ya recibimos la información de tu orden. Estamos a la espera de la aprobación del pago, te avisaremos tan pronto la recibamos.</p>
-                          <p class="medio">Si seleccionaste metódo contra entrega debes esperar que un asesor se comunique contigo.</p>
-                          <br />
-                          <p class="highlight">Recuerda que tu pedido llegará de 1 a 9 días hábiles después de realizada la compra.</p>
-                        </div>
-                        <div class="stage">
-                          <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Fpedidorecibido.png?alt=media&token=3f74ad3e-ef30-4e94-a071-c7137355bbce" alt="Pedido recibido logo">
-                        </div>
-                        <div class="footer">
-                          <p><strong>SÍGUENOS EN REDES</strong></p>
-                          <div class="social-icons">
-                            <a href="https://instagram.com/ciclopista?igshid=MzRlODBiNWFlZA==" target="_blank"><img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Finstagram%20(1).png?alt=media&token=4126c5ee-7bfd-4b02-be1c-e4ef3b86eee8" class="iconos" alt="Instagram logo"></a>
-                            <a href="https://www.facebook.com/Ciclopista.repuestosyaccesorios?mibextid=ZbWKwL" target="_blank"><img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Ffacebook.png?alt=media&token=280b1d07-9e9d-4008-b5d2-f34d4063ac0e" class="iconos" alt="Facebook logo"></a>
-                            <a href="https://www.tiktok.com" target="_blank"><img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Ftik-tok.png?alt=media&token=2bc42a56-917f-437d-a445-7873d524e06c" class="iconos" alt="Tik Tok logo"></a>            
-                          </div>
-                          <div class="contact">
-                            <a href="https://wa.link/zxwck6" style="color: inherit; text-decoration: none;"><img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Fwhatsapp.png?alt=media&token=c695aedc-da92-4572-a285-d662330e6493" class="iconos" alt="WhatsApp logo"></a>
-                            <p>+57 350 604 0725</p>
-                          </div>
-                        </div>
-                      </div>
-                    </body>
-                  </html>
-                `,
-              attachments: [
-                {
-                  filename: `${ticketDTO.code}.pdf`,
-                  path: pdfPath,
+                @media (max-width: 600px) {
+                  .container { padding: 10px; width: 500px; }
+                  .content, .footer { padding: 10px 0; }
+                  .social-icons a { margin: 5px; }
                 }
-              ],
-            });
-            console.log('Test Email sent:', result);
-          } catch (error) {
-            console.error('Error sending test email:', error);
-          }
-        })();
 
+                @media (max-width: 400px) {
+                  .container { padding: 10px; width: 400px; }
+                  .highlight { font-size: 14px; }
+                  .footer { font-size: 16px; }
+                  .contact { margin-top: 18px; }
+                  .saludo { font-size: 16px; }
+                  .medio { font-size: 13px; }
+                }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Fcplogo%20rojo%20registrado%20R%20m%C3%A1s%20grande%20(1).png?alt=media&token=68739185-9438-4bf9-ac31-9b43b3fa9c87" alt="Ciclopista Logo">
+                </div>
 
+                <div class="content">
+                  <p class="saludo"><strong>¡Hola, ${ticketDTO.name}!</strong></p>
+                  <p class="medio">Ya recibimos la información de tu orden. Estamos a la espera de la aprobación del pago, te avisaremos tan pronto la recibamos.</p>
+                  <p class="medio">Si seleccionaste metódo contra entrega debes esperar que un asesor se comunique contigo.</p>
+                  <br />
+                  <p class="highlight">Recuerda que tu pedido llegará de 1 a 9 días hábiles después de realizada la compra.</p>
+                </div>
 
+                <div class="stage">
+                  <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Fpedidorecibido.png?alt=media&token=3f74ad3e-ef30-4e94-a071-c7137355bbce" alt="Pedido recibido logo">
+                </div>
 
-        return res.send({ status: "OK", message: "Ticket successfully added", payload: ticketCode, amount: ticketDTO.amount });
-      } catch (hashError) {
-        console.error("Error generating hash:", hashError);
+                <div class="footer">
+                  <p><strong>SÍGUENOS EN REDES</strong></p>
+                  <div class="social-icons">
+                    <a href="https://instagram.com/ciclopista?igshid=MzRlODBiNWFlZA==" target="_blank">
+                      <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Finstagram%20(1).png?alt=media&token=4126c5ee-7bfd-4b02-be1c-e4ef3b86eee8" class="iconos" alt="Instagram logo">
+                    </a>
+                    <a href="https://www.facebook.com/Ciclopista.repuestosyaccesorios?mibextid=ZbWKwL" target="_blank">
+                      <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Ffacebook.png?alt=media&token=280b1d07-9e9d-4008-b5d2-f34d4063ac0e" class="iconos" alt="Facebook logo">
+                    </a>
+                    <a href="https://www.tiktok.com" target="_blank">
+                      <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Ftik-tok.png?alt=media&token=2bc42a56-917f-437d-a445-7873d524e06c" class="iconos" alt="Tik Tok logo">
+                    </a>
+                  </div>
+
+                  <div class="contact">
+                    <a href="https://wa.link/zxwck6" style="color: inherit; text-decoration: none;">
+                      <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Fwhatsapp.png?alt=media&token=c695aedc-da92-4572-a285-d662330e6493" class="iconos" alt="WhatsApp logo">
+                    </a>
+                    <p>+57 350 604 0725</p>
+                  </div>
+                </div>
+              </div>
+            </body>
+          </html>
+        `,
+          attachments: [
+            {
+              filename: `${ticketDTO.code}.pdf`,
+              content: pdfBuffer,              // ✅ buffer, NO path
+              contentType: "application/pdf",  // ✅ recomendado
+            },
+          ],
+        });
+
+        console.log("Email sent:", result);
+
+        return res.send({
+          status: "OK",
+          message: "Ticket successfully added",
+          payload: ticketCode,
+          amount: ticketDTO.amount,
+        });
+      } catch (mailOrPdfError) {
+        console.error("Error generating/sending PDF email:", mailOrPdfError);
         return res.status(500).send({
           status: "error",
           error: "Internal Server Error",
-          cause: "Error generating hash.",
+          cause: "Error generating/sending PDF email.",
         });
       }
-
-
-
     } catch (error) {
       return res.status(400).send({
         status: "error",
-        error: error,
+        error,
         cause: `Product with ID is out of stock or not found.`,
       });
     }
   }
+
 
   async updateTicket(req, res) {
     try {
@@ -509,10 +436,13 @@ class TicketController {
 
     try {
       // 1) Consultar pago en Mercado Pago
-      const response = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${client.accessToken}` },
-      });
+      const response = await fetch(
+        `https://api.mercadopago.com/v1/payments/${paymentId}`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${client.accessToken}` },
+        }
+      );
 
       if (!response.ok) return res.sendStatus(200);
 
@@ -526,15 +456,19 @@ class TicketController {
       const serialOrden = (data?.description || "").toString().trim();
       const mpReference = data?.id ? String(data.id) : String(paymentId || "");
 
-      const amount = typeof data?.transaction_amount === "number" ? data.transaction_amount : null;
+      const amount =
+        typeof data?.transaction_amount === "number"
+          ? data.transaction_amount
+          : null;
       const currency = data?.currency_id || "COP";
 
-      const paymentType = data?.payment_type_id || data?.payment_method?.type || "N/A";
-      const paymentMethodId = data?.payment_method_id || data?.payment_method?.id || "N/A";
+      const paymentType =
+        data?.payment_type_id || data?.payment_method?.type || "N/A";
+      const paymentMethodId =
+        data?.payment_method_id || data?.payment_method?.id || "N/A";
 
       const payerEmail = data?.payer?.email;
       if (!payerEmail) return res.sendStatus(200);
-
 
       // 4) Traer ticket completo (PRIMERO)
       const ticket = serialOrden
@@ -548,10 +482,7 @@ class TicketController {
       // ✅ Descontar stock SOLO la primera vez
       if (isFirstApproval) {
         for (const item of ticket.cart) {
-          await productService.discountStock(
-            item._id,
-            item.quantity
-          );
+          await productService.discountStock(item._id, item.quantity);
         }
       }
 
@@ -562,7 +493,6 @@ class TicketController {
           { $set: { statusPay: statusPayUpper } }
         );
       }
-
 
       // Helpers
       const formatMoney = (value, cur) => {
@@ -591,12 +521,32 @@ class TicketController {
 
       const statusUI = (() => {
         if (statusRaw === "approved")
-          return { label: "APROBADO", bg: "#e8fff1", fg: "#1e7a3a", border: "#b7efc5" };
+          return {
+            label: "APROBADO",
+            bg: "#e8fff1",
+            fg: "#1e7a3a",
+            border: "#b7efc5",
+          };
         if (statusRaw === "pending" || statusRaw === "in_process")
-          return { label: "PENDIENTE", bg: "#fff8e6", fg: "#8a5b00", border: "#ffe1a6" };
+          return {
+            label: "PENDIENTE",
+            bg: "#fff8e6",
+            fg: "#8a5b00",
+            border: "#ffe1a6",
+          };
         if (statusRaw === "rejected" || statusRaw === "cancelled")
-          return { label: "RECHAZADO", bg: "#ffecec", fg: "#a81818", border: "#ffb3b3" };
-        return { label: statusRaw.toUpperCase(), bg: "#eef2ff", fg: "#2b3a8f", border: "#c7d2fe" };
+          return {
+            label: "RECHAZADO",
+            bg: "#ffecec",
+            fg: "#a81818",
+            border: "#ffb3b3",
+          };
+        return {
+          label: statusRaw.toUpperCase(),
+          bg: "#eef2ff",
+          fg: "#2b3a8f",
+          border: "#c7d2fe",
+        };
       })();
 
       const mensajeEstado = (() => {
@@ -646,8 +596,8 @@ class TicketController {
       `;
       })();
 
-      // 5) Generar PDF comprobante
-      const pdfPath = await generarComprobantePagoPDF(
+      // ✅ 5) Generar PDF comprobante EN MEMORIA (Buffer) - NO guarda nada
+      const pdfBuffer = await generarComprobantePagoPDF(
         {
           serialOrden,
           referenciaMp: mpReference,
@@ -662,7 +612,7 @@ class TicketController {
         ticket
       );
 
-      // 6) HTML del correo (SIN imagen pedido recibido + KPIs responsive)
+      // 6) HTML del correo
       const html = `
 <!DOCTYPE html>
 <html>
@@ -736,7 +686,6 @@ class TicketController {
     }
     .small { font-size: 12px; color: #666; margin-top: 6px; }
 
-    /* ✅ Grid real: 2 columnas en desktop, 1 en móvil */
     .grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -781,7 +730,7 @@ class TicketController {
       .saludo { font-size: 16px; }
       .medio { font-size: 13px; }
       .highlight { font-size: 14px; }
-      .grid { grid-template-columns: 1fr; }  /* ✅ 1 columna móvil */
+      .grid { grid-template-columns: 1fr; }
       .kpi .value { font-size: 14px; }
     }
   </style>
@@ -803,7 +752,10 @@ class TicketController {
         <div class="card">
           <div class="badgeWrap">
             <span class="badge">${statusUI.label}</span>
-            ${statusDetail ? `<div class="small">Detalle: <strong>${statusDetail}</strong></div>` : ``}
+            ${statusDetail
+          ? `<div class="small">Detalle: <strong>${statusDetail}</strong></div>`
+          : ``
+        }
           </div>
 
           <div class="grid">
@@ -834,8 +786,6 @@ class TicketController {
         </p>
       </div>
 
-      <!-- ✅ QUITADO: imagen de "pedido recibido" -->
-
       <div class="footer">
         <p><strong>SÍGUENOS EN REDES</strong></p>
         <div class="social-icons">
@@ -862,9 +812,9 @@ class TicketController {
   </div>
 </body>
 </html>
-    `;
+`;
 
-      // 7) Enviar correo + adjuntar PDF
+      // ✅ 7) Enviar correo + adjuntar PDF DESDE MEMORIA (sin path)
       await transport.sendMail({
         from: entorno.GOOGLE_MAIL,
         to: `${payerEmail},${entorno.GOOGLE_MAIL}`,
@@ -873,7 +823,8 @@ class TicketController {
         attachments: [
           {
             filename: `comprobante-pago-orden-${serialOrden || "N-A"}.pdf`,
-            path: pdfPath,
+            content: pdfBuffer,
+            contentType: "application/pdf",
           },
         ],
       });
@@ -890,6 +841,7 @@ class TicketController {
       return res.sendStatus(200);
     }
   }
+
 
 
 

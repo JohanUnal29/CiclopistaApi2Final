@@ -1,339 +1,296 @@
-import fs from "fs";
-import path from "path";
 import axios from "axios";
 import pdfMake from "pdfmake/build/pdfmake.js";
 import pdfFonts from "pdfmake/build/vfs_fonts.js";
 
 pdfMake.vfs = pdfFonts.pdfMake.vfs;
 
-const __dirname = path.resolve();
-
 /* =========================
    HELPERS
 ========================= */
 
-// Descargar imagen y convertir a base64 (para pdfmake)
 const loadImage = async (url) => {
-    try {
-        const res = await axios.get(url, { responseType: "arraybuffer" });
-        return Buffer.from(res.data, "binary").toString("base64");
-    } catch {
-        return null;
-    }
+  try {
+    const res = await axios.get(url, { responseType: "arraybuffer" });
+    return Buffer.from(res.data, "binary").toString("base64");
+  } catch {
+    return null;
+  }
 };
 
-// Formato dinero COP
 const formatMoney = (value, currency = "COP") => {
-    if (typeof value !== "number") return "N/A";
-    return new Intl.NumberFormat("es-CO", {
-        style: "currency",
-        currency,
-        maximumFractionDigits: 0,
-    }).format(value);
+  if (typeof value !== "number") return "N/A";
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0,
+  }).format(value);
 };
 
-// FECHA BONITA + HORA COLOMBIA
 const formatFechaCO = (isoString) => {
-    if (!isoString) return "";
-    const d = new Date(isoString);
-    if (Number.isNaN(d.getTime())) return String(isoString);
+  if (!isoString) return "";
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return String(isoString);
 
-    return new Intl.DateTimeFormat("es-CO", {
-        timeZone: "America/Bogota",
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: true,
-    }).format(d);
+  return new Intl.DateTimeFormat("es-CO", {
+    timeZone: "America/Bogota",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(d);
 };
 
-// UI del estado
 const statusConfig = (status) => {
-    const s = String(status || "unknown").toLowerCase();
-    if (s === "approved") return { label: "APROBADO", color: "#1e7a3a", bg: "#e8fff1" };
-    if (s === "pending" || s === "in_process")
-        return { label: "PENDIENTE", color: "#8a5b00", bg: "#fff8e6" };
-    if (s === "rejected" || s === "cancelled")
-        return { label: "RECHAZADO", color: "#a81818", bg: "#ffecec" };
-    return { label: s.toUpperCase(), color: "#2b3a8f", bg: "#eef2ff" };
+  const s = String(status || "unknown").toLowerCase();
+  if (s === "approved") return { label: "APROBADO", color: "#1e7a3a", bg: "#e8fff1" };
+  if (s === "pending" || s === "in_process")
+    return { label: "PENDIENTE", color: "#8a5b00", bg: "#fff8e6" };
+  if (s === "rejected" || s === "cancelled")
+    return { label: "RECHAZADO", color: "#a81818", bg: "#ffecec" };
+  return { label: s.toUpperCase(), color: "#2b3a8f", bg: "#eef2ff" };
 };
 
-// Mensaje humano
 const mensajeEstado = (status) => {
-    const s = String(status || "unknown").toLowerCase();
-    if (s === "approved")
-        return "¡Gracias por tu compra y por confiar en nosotros!. Tu pago fue aprobado correctamente y tu pedido ya está en proceso.";
-    if (s === "pending" || s === "in_process")
-        return "Tu pago se encuentra en revisión. Esto puede tardar unos minutos. Si tienes dudas, contáctanos por WhatsApp.";
-    if (s === "rejected" || s === "cancelled")
-        return "Tu pago no pudo ser procesado. Revisa tu medio de pago o intenta nuevamente. Si el problema persiste, contáctanos por WhatsApp.";
-    return "Estamos procesando la información de tu pago. Si necesitas ayuda, contáctanos por WhatsApp.";
+  const s = String(status || "unknown").toLowerCase();
+  if (s === "approved")
+    return "¡Gracias por tu compra y por confiar en nosotros!. Tu pago fue aprobado correctamente y tu pedido ya está en proceso.";
+  if (s === "pending" || s === "in_process")
+    return "Tu pago se encuentra en revisión. Esto puede tardar unos minutos. Si tienes dudas, contáctanos por WhatsApp.";
+  if (s === "rejected" || s === "cancelled")
+    return "Tu pago no pudo ser procesado. Revisa tu medio de pago o intenta nuevamente. Si el problema persiste, contáctanos por WhatsApp.";
+  return "Estamos procesando la información de tu pago. Si necesitas ayuda, contáctanos por WhatsApp.";
 };
 
 const safe = (v) => (v === null || v === undefined || v === "" ? "N/A" : String(v));
 
 /* =========================
-   GENERADOR PDF (COMPROBANTE)
+   GENERADOR PDF (COMPROBANTE) - EN MEMORIA (BUFFER)
 ========================= */
 
 /**
- * Genera comprobante PDF de pago + datos de orden (ticket de Mongo) + tabla de productos
- *
- * @param {Object} pago
- * @param {string} pago.serialOrden
- * @param {string|number} pago.referenciaMp
- * @param {string} pago.estado
- * @param {string} [pago.detalleEstado]
- * @param {string} pago.medioPago
- * @param {number} pago.monto
- * @param {string} [pago.moneda="COP"]
- * @param {string} [pago.fecha]  -> date_approved/date_created
- * @param {string} [pago.email]  -> payer.email (opcional)
- * @param {string} [pago.logoUrl]
- *
- * @param {Object} ticket  -> documento Mongo (schema tickets)
- *
- * @returns {Promise<string>} filePath
+ * ✅ Genera el comprobante como Buffer (NO crea carpetas, NO guarda en disco)
+ * @returns {Promise<Buffer>}
  */
 const generarComprobantePagoPDF = (pago, ticket) => {
-    return new Promise(async (resolve, reject) => {
-        try {
-            const dir = path.join(__dirname, "comprobantes_pago");
-            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return new Promise(async (resolve, reject) => {
+    try {
+      const ui = statusConfig(pago?.estado);
+      const fechaBonita = formatFechaCO(pago?.fecha);
 
-            const serial = pago?.serialOrden || ticket?.code || "N-A";
-            const filePath = path.join(dir, `comprobante-pago-orden-${serial}.pdf`);
+      const logoUrl =
+        pago?.logoUrl ||
+        "https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Fcplogo%20rojo%20registrado%20R%20m%C3%A1s%20grande%20(1).png?alt=media&token=68739185-9438-4bf9-ac31-9b43b3fa9c87";
 
-            const ui = statusConfig(pago?.estado);
-            const fechaBonita = formatFechaCO(pago?.fecha);
+      const logoBase64 = await loadImage(logoUrl);
 
-            const logoUrl =
-                pago?.logoUrl ||
-                "https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Fcplogo%20rojo%20registrado%20R%20m%C3%A1s%20grande%20(1).png?alt=media&token=68739185-9438-4bf9-ac31-9b43b3fa9c87";
+      // ===== Tabla de carrito (con imágenes) =====
+      const cart = Array.isArray(ticket?.cart) ? ticket.cart : [];
+      const cartTableBody = [
+        [
+          { text: "Imagen", style: "tableHeader" },
+          { text: "Producto", style: "tableHeader" },
+          { text: "Código", style: "tableHeader" },
+          { text: "Cant.", style: "tableHeader" },
+          { text: "Precio", style: "tableHeader" },
+        ],
+      ];
 
-            const logoBase64 = await loadImage(logoUrl);
+      for (const item of cart) {
+        const imgB64 = item?.image ? await loadImage(item.image) : null;
 
-            // ===== Tabla de carrito (con imágenes) =====
-            const cart = Array.isArray(ticket?.cart) ? ticket.cart : [];
-            const cartTableBody = [
+        cartTableBody.push([
+          imgB64
+            ? { image: "data:image/png;base64," + imgB64, fit: [42, 42] }
+            : { text: "Sin imagen", style: "muted" },
+          { text: safe(item?.title), style: "cell" },
+          { text: safe(item?.code), style: "cell" },
+          { text: safe(item?.quantity), style: "cellCenter" },
+          { text: safe(item?.price), style: "cellRight" },
+        ]);
+      }
+
+      const docDefinition = {
+        pageSize: "A4",
+        pageMargins: [40, 40, 40, 40],
+
+        content: [
+          {
+            columns: [
+              logoBase64
+                ? { image: "data:image/png;base64," + logoBase64, fit: [140, 60] }
+                : { text: "Ciclopista", style: "brandFallback" },
+              {
+                stack: [
+                  { text: "COMPROBANTE", style: "rightTitle" },
+                  { text: "Pago + Detalles de la orden", style: "rightSubtitle" },
+                  { text: fechaBonita ? `Fecha: ${fechaBonita}` : "", style: "rightMeta" },
+                ],
+                alignment: "right",
+              },
+            ],
+            margin: [0, 0, 0, 12],
+          },
+
+          {
+            table: {
+              widths: ["*"],
+              body: [
                 [
-                    { text: "Imagen", style: "tableHeader" },
-                    { text: "Producto", style: "tableHeader" },
-                    { text: "Código", style: "tableHeader" },
-                    { text: "Cant.", style: "tableHeader" },
-                    { text: "Precio", style: "tableHeader" },
+                  {
+                    text: ui.label,
+                    alignment: "center",
+                    color: ui.color,
+                    fillColor: ui.bg,
+                    bold: true,
+                    fontSize: 15,
+                    margin: [0, 9, 0, 9],
+                  },
                 ],
-            ];
+              ],
+            },
+            layout: { hLineColor: () => "#ffffff", vLineColor: () => "#ffffff" },
+            margin: [0, 0, 0, 10],
+          },
 
-            for (const item of cart) {
-                const imgB64 = item?.image ? await loadImage(item.image) : null;
+          { text: mensajeEstado(pago?.estado), style: "paragraph", margin: [0, 0, 0, 12] },
 
-                cartTableBody.push([
-                    imgB64
-                        ? { image: "data:image/png;base64," + imgB64, fit: [42, 42] }
-                        : { text: "Sin imagen", style: "muted" },
-                    { text: safe(item?.title), style: "cell" },
-                    { text: safe(item?.code), style: "cell" },
-                    { text: safe(item?.quantity), style: "cellCenter" }, // 👈 Mongo usa quantity
-                    { text: safe(item?.price), style: "cellRight" },
-                ]);
-            }
+          { text: "Resumen del pago", style: "sectionTitle", margin: [0, 0, 0, 6] },
+          {
+            table: {
+              widths: [170, "*"],
+              body: [
+                [{ text: "Serial de la orden", style: "k" }, { text: safe(pago?.serialOrden), style: "v" }],
+                [{ text: "Referencia Mercado Pago", style: "k" }, { text: safe(pago?.referenciaMp), style: "v" }],
+                [{ text: "Monto", style: "k" }, { text: formatMoney(pago?.monto, pago?.moneda), style: "vAmount" }],
+                [{ text: "Medio de pago", style: "k" }, { text: safe(pago?.medioPago), style: "v" }],
+                [{ text: "Detalle", style: "k" }, { text: safe(pago?.detalleEstado), style: "v" }],
+              ],
+            },
+            layout: {
+              hLineColor: () => "#eaeaea",
+              vLineColor: () => "#eaeaea",
+              paddingLeft: () => 10,
+              paddingRight: () => 10,
+              paddingTop: () => 8,
+              paddingBottom: () => 8,
+            },
+            margin: [0, 0, 0, 12],
+          },
 
-            const docDefinition = {
-                pageSize: "A4",
-                pageMargins: [40, 40, 40, 40],
+          { text: "Detalles de la orden", style: "sectionTitle", margin: [0, 0, 0, 6] },
+          {
+            table: {
+              widths: [170, "*"],
+              body: [
+                [{ text: "Código", style: "k" }, { text: safe(ticket?.code), style: "v" }],
+                [{ text: "Fecha de compra", style: "k" }, { text: safe(ticket?.purchase_datetime), style: "v" }],
+                [{ text: "Nombre", style: "k" }, { text: safe(ticket?.name), style: "v" }],
+                [{ text: "Documento", style: "k" }, { text: safe(ticket?.identification_document), style: "v" }],
+                [{ text: "Comprador", style: "k" }, { text: safe(ticket?.purchaser), style: "v" }],
+                [{ text: "Teléfono", style: "k" }, { text: safe(ticket?.phone), style: "v" }],
+                ...(pago?.email ? [[{ text: "Email", style: "k" }, { text: safe(pago?.email), style: "v" }]] : []),
+              ],
+            },
+            layout: {
+              hLineColor: () => "#eaeaea",
+              vLineColor: () => "#eaeaea",
+              paddingLeft: () => 10,
+              paddingRight: () => 10,
+              paddingTop: () => 8,
+              paddingBottom: () => 8,
+            },
+            margin: [0, 0, 0, 12],
+          },
 
-                content: [
-                    // HEADER
-                    {
-                        columns: [
-                            logoBase64
-                                ? { image: "data:image/png;base64," + logoBase64, fit: [140, 60] }
-                                : { text: "Ciclopista", style: "brandFallback" },
-                            {
-                                stack: [
-                                    { text: "COMPROBANTE", style: "rightTitle" },
-                                    { text: "Pago + Detalles de la orden", style: "rightSubtitle" },
-                                    { text: fechaBonita ? `Fecha: ${fechaBonita}` : "", style: "rightMeta" },
-                                ],
-                                alignment: "right",
-                            },
-                        ],
-                        margin: [0, 0, 0, 12],
-                    },
+          { text: "Dirección de entrega", style: "sectionTitle", margin: [0, 0, 0, 6] },
+          {
+            table: {
+              widths: [170, "*"],
+              body: [
+                [{ text: "Departamento", style: "k" }, { text: safe(ticket?.departamento), style: "v" }],
+                [{ text: "Ciudad / Municipio", style: "k" }, { text: safe(ticket?.ciudad_o_municipio), style: "v" }],
+                [{ text: "Barrio", style: "k" }, { text: safe(ticket?.barrio), style: "v" }],
+                [{ text: "Dirección", style: "k" }, { text: safe(ticket?.direccion), style: "v" }],
+                [{ text: "Referencias", style: "k" }, { text: safe(ticket?.referencias_entrega), style: "v" }],
+                [{ text: "Mensaje", style: "k" }, { text: safe(ticket?.message), style: "v" }],
+                [{ text: "Monto total orden", style: "k" }, { text: safe(ticket?.amount), style: "vAmount" }],
+                [{ text: "Estado pago (DB)", style: "k" }, { text: safe(ticket?.statusPay), style: "v" }],
+              ],
+            },
+            layout: {
+              hLineColor: () => "#eaeaea",
+              vLineColor: () => "#eaeaea",
+              paddingLeft: () => 10,
+              paddingRight: () => 10,
+              paddingTop: () => 8,
+              paddingBottom: () => 8,
+            },
+            margin: [0, 0, 0, 12],
+          },
 
-                    // BADGE ESTADO
-                    {
-                        table: {
-                            widths: ["*"],
-                            body: [
-                                [
-                                    {
-                                        text: ui.label,
-                                        alignment: "center",
-                                        color: ui.color,
-                                        fillColor: ui.bg,
-                                        bold: true,
-                                        fontSize: 15,
-                                        margin: [0, 9, 0, 9],
-                                    },
-                                ],
-                            ],
-                        },
-                        layout: { hLineColor: () => "#ffffff", vLineColor: () => "#ffffff" },
-                        margin: [0, 0, 0, 10],
-                    },
+          { text: "Productos en el carrito", style: "sectionTitle", margin: [0, 0, 0, 6] },
+          {
+            table: {
+              headerRows: 1,
+              widths: [60, "*", 70, 40, 60],
+              body: cartTableBody,
+            },
+            layout: {
+              fillColor: (rowIndex) => (rowIndex === 0 ? "#f2f2f2" : null),
+              hLineColor: () => "#eaeaea",
+              vLineColor: () => "#eaeaea",
+              paddingLeft: () => 8,
+              paddingRight: () => 8,
+              paddingTop: () => 6,
+              paddingBottom: () => 6,
+            },
+            margin: [0, 0, 0, 14],
+          },
 
-                    // MENSAJE
-                    { text: mensajeEstado(pago?.estado), style: "paragraph", margin: [0, 0, 0, 12] },
+          {
+            text: "Este comprobante es informativo y se genera automáticamente.",
+            style: "footerNote",
+            margin: [0, 10, 0, 0],
+          },
+        ],
 
-                    // ====== CARD: Datos del pago ======
-                    { text: "Resumen del pago", style: "sectionTitle", margin: [0, 0, 0, 6] },
-                    {
-                        table: {
-                            widths: [170, "*"],
-                            body: [
-                                [{ text: "Serial de la orden", style: "k" }, { text: safe(pago?.serialOrden), style: "v" }],
-                                [{ text: "Referencia Mercado Pago", style: "k" }, { text: safe(pago?.referenciaMp), style: "v" }],
-                                [{ text: "Monto", style: "k" }, { text: formatMoney(pago?.monto, pago?.moneda), style: "vAmount" }],
-                                [{ text: "Medio de pago", style: "k" }, { text: safe(pago?.medioPago), style: "v" }],
-                                [{ text: "Detalle", style: "k" }, { text: safe(pago?.detalleEstado), style: "v" }],
-                            ],
-                        },
-                        layout: {
-                            hLineColor: () => "#eaeaea",
-                            vLineColor: () => "#eaeaea",
-                            paddingLeft: () => 10,
-                            paddingRight: () => 10,
-                            paddingTop: () => 8,
-                            paddingBottom: () => 8,
-                        },
-                        margin: [0, 0, 0, 12],
-                    },
+        styles: {
+          brandFallback: { fontSize: 18, bold: true, color: "#d32f2f" },
 
-                    // ====== CARD: Datos de la orden (Mongo ticket) ======
-                    { text: "Detalles de la orden", style: "sectionTitle", margin: [0, 0, 0, 6] },
-                    {
-                        columns: [
-                            {
-                                width: "*",
-                                table: {
-                                    widths: [170, "*"],
-                                    body: [
-                                        [{ text: "Código", style: "k" }, { text: safe(ticket?.code), style: "v" }],
-                                        [{ text: "Fecha de compra", style: "k" }, { text: safe(ticket?.purchase_datetime), style: "v" }],
-                                        [{ text: "Nombre", style: "k" }, { text: safe(ticket?.name), style: "v" }],
-                                        [{ text: "Documento", style: "k" }, { text: safe(ticket?.identification_document), style: "v" }],
-                                        [{ text: "Comprador", style: "k" }, { text: safe(ticket?.purchaser), style: "v" }],
-                                        [{ text: "Teléfono", style: "k" }, { text: safe(ticket?.phone), style: "v" }],
-                                        ...(pago?.email ? [[{ text: "Email", style: "k" }, { text: safe(pago?.email), style: "v" }]] : []),
-                                    ],
-                                },
-                                layout: {
-                                    hLineColor: () => "#eaeaea",
-                                    vLineColor: () => "#eaeaea",
-                                    paddingLeft: () => 10,
-                                    paddingRight: () => 10,
-                                    paddingTop: () => 8,
-                                    paddingBottom: () => 8,
-                                },
-                            },
-                        ],
-                        margin: [0, 0, 0, 12],
-                    },
+          rightTitle: { fontSize: 13, bold: true, color: "#333" },
+          rightSubtitle: { fontSize: 11, color: "#666", margin: [0, 2, 0, 0] },
+          rightMeta: { fontSize: 9, color: "#777", margin: [0, 6, 0, 0] },
 
-                    // ====== CARD: Dirección ======
-                    { text: "Dirección de entrega", style: "sectionTitle", margin: [0, 0, 0, 6] },
-                    {
-                        table: {
-                            widths: [170, "*"],
-                            body: [
-                                [{ text: "Departamento", style: "k" }, { text: safe(ticket?.departamento), style: "v" }],
-                                [{ text: "Ciudad / Municipio", style: "k" }, { text: safe(ticket?.ciudad_o_municipio), style: "v" }],
-                                [{ text: "Barrio", style: "k" }, { text: safe(ticket?.barrio), style: "v" }],
-                                [{ text: "Dirección", style: "k" }, { text: safe(ticket?.direccion), style: "v" }],
-                                [{ text: "Referencias", style: "k" }, { text: safe(ticket?.referencias_entrega), style: "v" }],
-                                [{ text: "Mensaje", style: "k" }, { text: safe(ticket?.message), style: "v" }],
-                                [{ text: "Monto total orden", style: "k" }, { text: safe(ticket?.amount), style: "vAmount" }],
-                                [{ text: "Estado pago (DB)", style: "k" }, { text: safe(ticket?.statusPay), style: "v" }],
-                            ],
-                        },
-                        layout: {
-                            hLineColor: () => "#eaeaea",
-                            vLineColor: () => "#eaeaea",
-                            paddingLeft: () => 10,
-                            paddingRight: () => 10,
-                            paddingTop: () => 8,
-                            paddingBottom: () => 8,
-                        },
-                        margin: [0, 0, 0, 12],
-                    },
+          paragraph: { fontSize: 11, color: "#333", lineHeight: 1.25 },
+          sectionTitle: { fontSize: 12, bold: true, color: "#333" },
 
-                    // ====== TABLA DE PRODUCTOS ======
-                    { text: "Productos en el carrito", style: "sectionTitle", margin: [0, 0, 0, 6] },
-                    {
-                        table: {
-                            headerRows: 1,
-                            widths: [60, "*", 70, 40, 60],
-                            body: cartTableBody,
-                        },
-                        layout: {
-                            fillColor: (rowIndex) => (rowIndex === 0 ? "#f2f2f2" : null),
-                            hLineColor: () => "#eaeaea",
-                            vLineColor: () => "#eaeaea",
-                            paddingLeft: () => 8,
-                            paddingRight: () => 8,
-                            paddingTop: () => 6,
-                            paddingBottom: () => 6,
-                        },
-                        margin: [0, 0, 0, 14],
-                    },
+          k: { fontSize: 10, bold: true, color: "#666" },
+          v: { fontSize: 10, color: "#111" },
+          vAmount: { fontSize: 11, bold: true, color: "#d32f2f" },
 
-                    // Footer
-                    {
-                        text: "Este comprobante es informativo y se genera automáticamente.",
-                        style: "footerNote",
-                        margin: [0, 10, 0, 0],
-                    },
-                ],
+          tableHeader: { fontSize: 10, bold: true, color: "#333" },
+          cell: { fontSize: 9, color: "#111" },
+          cellCenter: { fontSize: 9, alignment: "center", color: "#111" },
+          cellRight: { fontSize: 9, alignment: "right", color: "#111" },
+          muted: { fontSize: 9, color: "#777" },
 
-                styles: {
-                    brandFallback: { fontSize: 18, bold: true, color: "#d32f2f" },
+          footerNote: { fontSize: 9, color: "#777" },
+        },
+      };
 
-                    rightTitle: { fontSize: 13, bold: true, color: "#333" },
-                    rightSubtitle: { fontSize: 11, color: "#666", margin: [0, 2, 0, 0] },
-                    rightMeta: { fontSize: 9, color: "#777", margin: [0, 6, 0, 0] },
+      const pdfDoc = pdfMake.createPdf(docDefinition);
 
-                    paragraph: { fontSize: 11, color: "#333", lineHeight: 1.25 },
-
-                    sectionTitle: { fontSize: 12, bold: true, color: "#333" },
-
-                    k: { fontSize: 10, bold: true, color: "#666" },
-                    v: { fontSize: 10, color: "#111" },
-                    vAmount: { fontSize: 11, bold: true, color: "#d32f2f" },
-
-                    tableHeader: { fontSize: 10, bold: true, color: "#333" },
-                    cell: { fontSize: 9, color: "#111" },
-                    cellCenter: { fontSize: 9, alignment: "center", color: "#111" },
-                    cellRight: { fontSize: 9, alignment: "right", color: "#111" },
-                    muted: { fontSize: 9, color: "#777" },
-
-                    footerNote: { fontSize: 9, color: "#777" },
-                },
-            };
-
-            const pdfDoc = pdfMake.createPdf(docDefinition);
-            pdfDoc.getBase64((b64) => {
-                fs.writeFileSync(filePath, Buffer.from(b64, "base64"));
-                resolve(filePath);
-            });
-        } catch (err) {
-            reject(err);
-        }
-    });
+      // ✅ aquí está la clave: NO escribir archivo, devolver Buffer
+      pdfDoc.getBase64((b64) => {
+        resolve(Buffer.from(b64, "base64"));
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
 };
 
 export default generarComprobantePagoPDF;
