@@ -1,7 +1,7 @@
 // Importamos la función para inicializar la aplicación de Firebase
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
-import { entorno } from "../../config";
+import { entorno } from "../../config.js";
 
 // Añade aquí tus credenciales
 const firebaseConfig = {
