@@ -23,17 +23,16 @@ import { MercadoPagoConfig } from "mercadopago";
 
 const transport = nodemailer.createTransport({
   host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // 587 = STARTTLS
+  port: 465,
+  secure: true, // 465 = SSL
   auth: {
     user: entorno.GOOGLE_MAIL,
-    pass: entorno.GOOGLE_PASS, // debe ser App Password si es Gmail
+    pass: entorno.GOOGLE_PASS, // DEBE ser App Password
   },
-  requireTLS: true,
-  connectionTimeout: 20000,
-  greetingTimeout: 20000,
-  socketTimeout: 20000,
+  connectionTimeout: 10000,
+  socketTimeout: 10000,
 });
+
 
 
 class TicketController {
@@ -195,6 +194,10 @@ class TicketController {
       // ✅ Generar PDF EN MEMORIA (Buffer) y enviar correo
       try {
         const pdfBuffer = await generarPDF(ticketDTO);
+
+        await transport.verify();
+        console.log("SMTP OK");
+
 
         const result = await transport.sendMail({
           from: entorno.GOOGLE_MAIL,
