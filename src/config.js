@@ -40,6 +40,7 @@ entorno.APIKEY_FIREBASE = process.env.APIKEY_FIREBASE;
 entorno.SENDER_ID = process.env.SENDER_ID;
 entorno.APPID = process.env.APPID;
 entorno.MEASUREMENTID = process.env.MEASUREMENTID;
+entorno.RESEND_API_KEY= process.env.RESEND_API_KEY;
 
 
 /* export default {
