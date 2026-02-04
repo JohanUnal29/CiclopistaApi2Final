@@ -798,7 +798,7 @@ class TicketController {
 
       // ✅ 7) Enviar correo + adjuntar PDF por Resend al correo del comprador (ticket.purchaser)
       await sendEmailWithPdfResend({
-        to: `${buyerEmail},${entorno.GOOGLE_MAIL}`,
+        to: `${buyerEmail}`,
         subject: `Estado de pago - Orden ${serialOrden || "N/A"}`,
         html,
         pdfBuffer,
