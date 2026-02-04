@@ -9,8 +9,6 @@ import crypto from "crypto";
 import { entorno } from "../config.js";
 import { sendEmailWithPdfResend } from "../utils/emailResend.js";
 
-console.log(entorno.ACCESS_TOKE_MELI)
-
 const client = new MercadoPagoConfig({
   accessToken: `${entorno.ACCESS_TOKE_MELI}`,
 })

@@ -27,9 +27,7 @@ import userProfileRouter from "./routes/userProfile.router.js";
 
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 
-console.log(entorno.URL_WEBHOOK)
-console.log(entorno.ACCESS_TOKE_MELI)
-console.log(entorno.FRONT_URL)
+
 const client = new MercadoPagoConfig({
   accessToken: `${entorno.ACCESS_TOKE_MELI}`,
 })
