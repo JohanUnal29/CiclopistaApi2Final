@@ -8,22 +8,31 @@ pdfMake.vfs = pdfFonts.pdfMake.vfs;
    HELPERS
 ========================= */
 
+// Solo lo usamos para el logo (1 imagen). El carrito ya NO descarga imágenes.
 const loadImage = async (url) => {
   try {
-    const res = await axios.get(url, { responseType: "arraybuffer" });
-    return Buffer.from(res.data, "binary").toString("base64");
+    const res = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 8000,
+    });
+
+    const contentType = res.headers?.["content-type"] || "image/png";
+    const b64 = Buffer.from(res.data).toString("base64");
+
+    return { b64, contentType };
   } catch {
     return null;
   }
 };
 
 const formatMoney = (value, currency = "COP") => {
-  if (typeof value !== "number") return "N/A";
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return "N/A";
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency,
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(n);
 };
 
 const formatFechaCO = (isoString) => {
@@ -45,7 +54,8 @@ const formatFechaCO = (isoString) => {
 
 const statusConfig = (status) => {
   const s = String(status || "unknown").toLowerCase();
-  if (s === "approved") return { label: "APROBADO", color: "#1e7a3a", bg: "#e8fff1" };
+  if (s === "approved")
+    return { label: "APROBADO", color: "#1e7a3a", bg: "#e8fff1" };
   if (s === "pending" || s === "in_process")
     return { label: "PENDIENTE", color: "#8a5b00", bg: "#fff8e6" };
   if (s === "rejected" || s === "cancelled")
@@ -64,7 +74,8 @@ const mensajeEstado = (status) => {
   return "Estamos procesando la información de tu pago. Si necesitas ayuda, contáctanos por WhatsApp.";
 };
 
-const safe = (v) => (v === null || v === undefined || v === "" ? "N/A" : String(v));
+const safe = (v) =>
+  v === null || v === undefined || v === "" ? "N/A" : String(v);
 
 /* =========================
    GENERADOR PDF (COMPROBANTE) - EN MEMORIA (BUFFER)
@@ -72,6 +83,9 @@ const safe = (v) => (v === null || v === undefined || v === "" ? "N/A" : String(
 
 /**
  * ✅ Genera el comprobante como Buffer (NO crea carpetas, NO guarda en disco)
+ * - Mantiene estética original
+ * - ✅ Incluye TODOS los productos
+ * - ✅ SIN imágenes en la tabla del carrito (para que sea liviano y estable en webhook)
  * @returns {Promise<Buffer>}
  */
 const generarComprobantePagoPDF = (pago, ticket) => {
@@ -84,13 +98,17 @@ const generarComprobantePagoPDF = (pago, ticket) => {
         pago?.logoUrl ||
         "https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Fcplogo%20rojo%20registrado%20R%20m%C3%A1s%20grande%20(1).png?alt=media&token=68739185-9438-4bf9-ac31-9b43b3fa9c87";
 
-      const logoBase64 = await loadImage(logoUrl);
+      // Solo logo (1 request). Carrito sin imágenes.
+      const logo = await loadImage(logoUrl);
+      const logoDataUrl = logo
+        ? `data:${logo.contentType};base64,${logo.b64}`
+        : null;
 
-      // ===== Tabla de carrito (con imágenes) =====
+      // ===== Tabla carrito (SIN imágenes, pero con TODOS los productos) =====
       const cart = Array.isArray(ticket?.cart) ? ticket.cart : [];
+
       const cartTableBody = [
         [
-          { text: "Imagen", style: "tableHeader" },
           { text: "Producto", style: "tableHeader" },
           { text: "Código", style: "tableHeader" },
           { text: "Cant.", style: "tableHeader" },
@@ -99,16 +117,14 @@ const generarComprobantePagoPDF = (pago, ticket) => {
       ];
 
       for (const item of cart) {
-        const imgB64 = item?.image ? await loadImage(item.image) : null;
-
         cartTableBody.push([
-          imgB64
-            ? { image: "data:image/png;base64," + imgB64, fit: [42, 42] }
-            : { text: "Sin imagen", style: "muted" },
           { text: safe(item?.title), style: "cell" },
           { text: safe(item?.code), style: "cell" },
           { text: safe(item?.quantity), style: "cellCenter" },
-          { text: safe(item?.price), style: "cellRight" },
+          {
+            text: formatMoney(item?.price, pago?.moneda || "COP"),
+            style: "cellRight",
+          },
         ]);
       }
 
@@ -119,14 +135,17 @@ const generarComprobantePagoPDF = (pago, ticket) => {
         content: [
           {
             columns: [
-              logoBase64
-                ? { image: "data:image/png;base64," + logoBase64, fit: [140, 60] }
+              logoDataUrl
+                ? { image: logoDataUrl, fit: [140, 60] }
                 : { text: "Ciclopista", style: "brandFallback" },
               {
                 stack: [
                   { text: "COMPROBANTE", style: "rightTitle" },
                   { text: "Pago + Detalles de la orden", style: "rightSubtitle" },
-                  { text: fechaBonita ? `Fecha: ${fechaBonita}` : "", style: "rightMeta" },
+                  {
+                    text: fechaBonita ? `Fecha: ${fechaBonita}` : "",
+                    style: "rightMeta",
+                  },
                 ],
                 alignment: "right",
               },
@@ -155,7 +174,11 @@ const generarComprobantePagoPDF = (pago, ticket) => {
             margin: [0, 0, 0, 10],
           },
 
-          { text: mensajeEstado(pago?.estado), style: "paragraph", margin: [0, 0, 0, 12] },
+          {
+            text: mensajeEstado(pago?.estado),
+            style: "paragraph",
+            margin: [0, 0, 0, 12],
+          },
 
           { text: "Resumen del pago", style: "sectionTitle", margin: [0, 0, 0, 6] },
           {
@@ -191,7 +214,9 @@ const generarComprobantePagoPDF = (pago, ticket) => {
                 [{ text: "Documento", style: "k" }, { text: safe(ticket?.identification_document), style: "v" }],
                 [{ text: "Comprador", style: "k" }, { text: safe(ticket?.purchaser), style: "v" }],
                 [{ text: "Teléfono", style: "k" }, { text: safe(ticket?.phone), style: "v" }],
-                ...(pago?.email ? [[{ text: "Email", style: "k" }, { text: safe(pago?.email), style: "v" }]] : []),
+                ...(pago?.email
+                  ? [[{ text: "Email", style: "k" }, { text: safe(pago?.email), style: "v" }]]
+                  : []),
               ],
             },
             layout: {
@@ -232,23 +257,25 @@ const generarComprobantePagoPDF = (pago, ticket) => {
           },
 
           { text: "Productos en el carrito", style: "sectionTitle", margin: [0, 0, 0, 6] },
-          {
-            table: {
-              headerRows: 1,
-              widths: [60, "*", 70, 40, 60],
-              body: cartTableBody,
-            },
-            layout: {
-              fillColor: (rowIndex) => (rowIndex === 0 ? "#f2f2f2" : null),
-              hLineColor: () => "#eaeaea",
-              vLineColor: () => "#eaeaea",
-              paddingLeft: () => 8,
-              paddingRight: () => 8,
-              paddingTop: () => 6,
-              paddingBottom: () => 6,
-            },
-            margin: [0, 0, 0, 14],
-          },
+          cart.length
+            ? {
+                table: {
+                  headerRows: 1,
+                  widths: ["*", 70, 40, 70],
+                  body: cartTableBody,
+                },
+                layout: {
+                  fillColor: (rowIndex) => (rowIndex === 0 ? "#f2f2f2" : null),
+                  hLineColor: () => "#eaeaea",
+                  vLineColor: () => "#eaeaea",
+                  paddingLeft: () => 8,
+                  paddingRight: () => 8,
+                  paddingTop: () => 6,
+                  paddingBottom: () => 6,
+                },
+                margin: [0, 0, 0, 14],
+              }
+            : { text: "No hay productos en el carrito.", style: "muted", margin: [0, 0, 0, 14] },
 
           {
             text: "Este comprobante es informativo y se genera automáticamente.",
@@ -283,9 +310,13 @@ const generarComprobantePagoPDF = (pago, ticket) => {
 
       const pdfDoc = pdfMake.createPdf(docDefinition);
 
-      // ✅ aquí está la clave: NO escribir archivo, devolver Buffer
+      // ✅ No escribir archivo, devolver Buffer
       pdfDoc.getBase64((b64) => {
-        resolve(Buffer.from(b64, "base64"));
+        try {
+          resolve(Buffer.from(b64, "base64"));
+        } catch (e) {
+          reject(e);
+        }
       });
     } catch (err) {
       reject(err);
