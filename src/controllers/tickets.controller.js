@@ -144,39 +144,39 @@ class TicketController {
   }
 
   async addTicket(req, res) {
-  try {
-    const ticket = req.body;
+    try {
+      const ticket = req.body;
 
-    // 1) Código único
-    let ticketCode = uuidv4().toString();
-    while (await ticketsModel.findOne({ code: ticketCode }).lean()) {
-      ticketCode = uuidv4().toString();
-    }
-
-    // 2) Validación de stock
-    const updatedCart = [];
-    for (const cartItem of ticket.cart) {
-      const product = await productService.getProductById(cartItem._id);
-
-      if (product && product.stock >= cartItem.cantidad) {
-        updatedCart.push(cartItem);
-      } else {
-        return res.status(400).send({
-          status: "error",
-          error: "Error-add-product-to-the-cart",
-          cause: `Product with ID ${cartItem._id} is out of stock or not found.`,
-        });
+      // 1) Código único
+      let ticketCode = uuidv4().toString();
+      while (await ticketsModel.findOne({ code: ticketCode }).lean()) {
+        ticketCode = uuidv4().toString();
       }
-    }
 
-    // 3) DTO
-    const ticketDTO = new TicketDTO(ticketCode, ticket, updatedCart);
+      // 2) Validación de stock
+      const updatedCart = [];
+      for (const cartItem of ticket.cart) {
+        const product = await productService.getProductById(cartItem._id);
 
-    // 4) Generar PDF (Buffer)
-    const pdfBuffer = await generarPDF(ticketDTO);
+        if (product && product.stock >= cartItem.cantidad) {
+          updatedCart.push(cartItem);
+        } else {
+          return res.status(400).send({
+            status: "error",
+            error: "Error-add-product-to-the-cart",
+            cause: `Product with ID ${cartItem._id} is out of stock or not found.`,
+          });
+        }
+      }
 
-    // 5) Enviar correo con Resend (SI O SI)
-    const html = `
+      // 3) DTO
+      const ticketDTO = new TicketDTO(ticketCode, ticket, updatedCart);
+
+      // 4) Generar PDF (Buffer)
+      const pdfBuffer = await generarPDF(ticketDTO);
+
+      // 5) Enviar correo con Resend (SI O SI)
+      const html = `
       <html>
         <head>
           <style>
@@ -241,34 +241,34 @@ class TicketController {
       </html>
     `;
 
-    await sendEmailWithPdfResend({
-      to: `${ticketDTO.purchaser},${entorno.GOOGLE_MAIL_SELLER}`,
-      subject: "¡Recibimos tu pedido!",
-      html,
-      pdfBuffer,
-      filename: `${ticketDTO.code}.pdf`,
-    });
+      await sendEmailWithPdfResend({
+        to: `${ticketDTO.purchaser},${entorno.GOOGLE_MAIL_SELLER}`,
+        subject: "¡Recibimos tu pedido!",
+        html,
+        pdfBuffer,
+        filename: `${ticketDTO.code}.pdf`,
+      });
 
-    // 6) SOLO si el correo se envió, guardas ticket
-    await ticketService.addTicket(ticketDTO);
+      // 6) SOLO si el correo se envió, guardas ticket
+      await ticketService.addTicket(ticketDTO);
 
-    return res.send({
-      status: "OK",
-      message: "Ticket successfully added (email sent)",
-      payload: ticketCode,
-      amount: ticketDTO.amount,
-    });
-  } catch (err) {
-    console.error("addTicket failed:", err);
+      return res.send({
+        status: "OK",
+        message: "Ticket successfully added (email sent)",
+        payload: ticketCode,
+        amount: ticketDTO.amount,
+      });
+    } catch (err) {
+      console.error("addTicket failed:", err);
 
-    // Como tu regla es “si o si correo”, aquí devolvemos error
-    return res.status(503).send({
-      status: "error",
-      error: "EMAIL_FAILED",
-      cause: err?.message || "No se pudo enviar el correo",
-    });
+      // Como tu regla es “si o si correo”, aquí devolvemos error
+      return res.status(503).send({
+        status: "error",
+        error: "EMAIL_FAILED",
+        cause: err?.message || "No se pudo enviar el correo",
+      });
+    }
   }
-}
 
 
   async updateTicket(req, res) {
@@ -394,126 +394,141 @@ class TicketController {
 
 
   async webhookMercadoPago(req, res) {
-  const paymentId = req.query.id;
+    const paymentId = req.query.id;
 
-  try {
-    // 1) Consultar pago en Mercado Pago
-    const response = await fetch(
-      `https://api.mercadopago.com/v1/payments/${paymentId}`,
-      {
-        method: "GET",
-        headers: { Authorization: `Bearer ${client.accessToken}` },
+    try {
+      // 1) Consultar pago en Mercado Pago
+      const response = await fetch(
+        `https://api.mercadopago.com/v1/payments/${paymentId}`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${client.accessToken}` },
+        }
+      );
+
+      if (!response.ok) return res.sendStatus(200);
+
+      const data = await response.json();
+
+      // 2) Datos principales
+      const statusRaw = (data?.status || "pending").toString().toLowerCase();
+      const statusPayUpper = statusRaw.toUpperCase();
+      const statusDetail = (data?.status_detail || "").toString();
+
+      const serialOrden = (data?.description || "").toString().trim();
+      const mpReference = data?.id ? String(data.id) : String(paymentId || "");
+
+      const amount =
+        typeof data?.transaction_amount === "number"
+          ? data.transaction_amount
+          : null;
+      const currency = data?.currency_id || "COP";
+
+      const paymentType =
+        data?.payment_type_id || data?.payment_method?.type || "N/A";
+      const paymentMethodId =
+        data?.payment_method_id || data?.payment_method?.id || "N/A";
+
+      // OJO: este es el correo del pagador en MP (NO es el que quieres usar)
+      const payerEmail = data?.payer?.email;
+      if (!serialOrden) return res.sendStatus(200);
+
+      // 4) Traer ticket completo (PRIMERO)
+      const ticket = await ticketsModel.findOne({ code: serialOrden }).lean();
+      if (!ticket) return res.sendStatus(200);
+
+      // ✅ ESTE es el correo del comprador (formulario addTicket)
+      const buyerEmail = ticket?.purchaser;
+      if (!buyerEmail) return res.sendStatus(200);
+
+      // 🔐 Candado anti doble webhook (DESPUÉS de tener ticket)
+      const isFirstApproval =
+        statusRaw === "approved" && ticket && ticket.statusPay !== "APPROVED";
+
+      // ✅ Descontar stock SOLO la primera vez
+      if (isFirstApproval) {
+        for (const item of ticket.cart) {
+          await productService.discountStock(item._id, item.quantity);
+        }
       }
-    );
 
-    if (!response.ok) return res.sendStatus(200);
+      // 3) Actualizar estado de pago en Mongo (AL FINAL)
+      await ticketsModel.updateOne(
+        { code: serialOrden },
+        { $set: { statusPay: statusPayUpper } }
+      );
 
-    const data = await response.json();
+      // ✅ Candado anti-correo duplicado (robusto)
+      // 1 correo por (paymentId + status)
+      const notifKey = `MP:${mpReference}:STATUS:${statusPayUpper}`;
 
-    // 2) Datos principales (igual que tu código)
-    const statusRaw = (data?.status || "pending").toString().toLowerCase();
-    const statusPayUpper = statusRaw.toUpperCase();
-    const statusDetail = (data?.status_detail || "").toString();
+      const claimed = await ticketsModel.findOneAndUpdate(
+        { code: serialOrden, paymentNotifs: { $ne: notifKey } },
+        { $addToSet: { paymentNotifs: notifKey } },
+        { new: true }
+      );
 
-    const serialOrden = (data?.description || "").toString().trim();
-    const mpReference = data?.id ? String(data.id) : String(paymentId || "");
+      // Si ya estaba marcado, ya se envió ese correo antes → no duplicar
+      if (!claimed) return res.sendStatus(200);
 
-    const amount =
-      typeof data?.transaction_amount === "number"
-        ? data.transaction_amount
-        : null;
-    const currency = data?.currency_id || "COP";
+      // Helpers
+      const formatMoney = (value, cur) => {
+        if (typeof value !== "number") return "N/A";
+        try {
+          return new Intl.NumberFormat("es-CO", {
+            style: "currency",
+            currency: cur,
+            maximumFractionDigits: 0,
+          }).format(value);
+        } catch {
+          return `${value} ${cur}`;
+        }
+      };
 
-    const paymentType =
-      data?.payment_type_id || data?.payment_method?.type || "N/A";
-    const paymentMethodId =
-      data?.payment_method_id || data?.payment_method?.id || "N/A";
+      const paymentTypeHuman =
+        paymentType === "credit_card"
+          ? "crédito"
+          : paymentType === "debit_card"
+            ? "débito"
+            : paymentType === "bank_transfer"
+              ? "transferencia"
+              : paymentType;
 
-    const payerEmail = data?.payer?.email;
-    if (!payerEmail) return res.sendStatus(200);
+      const medioPagoTexto = `${String(paymentMethodId).toUpperCase()} (${paymentTypeHuman})`;
 
-    // 3) Traer ticket completo
-    const ticket = serialOrden
-      ? await ticketsModel.findOne({ code: serialOrden }).lean()
-      : null;
+      const statusUI = (() => {
+        if (statusRaw === "approved")
+          return {
+            label: "APROBADO",
+            bg: "#e8fff1",
+            fg: "#1e7a3a",
+            border: "#b7efc5",
+          };
+        if (statusRaw === "pending" || statusRaw === "in_process")
+          return {
+            label: "PENDIENTE",
+            bg: "#fff8e6",
+            fg: "#8a5b00",
+            border: "#ffe1a6",
+          };
+        if (statusRaw === "rejected" || statusRaw === "cancelled")
+          return {
+            label: "RECHAZADO",
+            bg: "#ffecec",
+            fg: "#a81818",
+            border: "#ffb3b3",
+          };
+        return {
+          label: statusRaw.toUpperCase(),
+          bg: "#eef2ff",
+          fg: "#2b3a8f",
+          border: "#c7d2fe",
+        };
+      })();
 
-    // Si no hay ticket, igual respondo 200 para no reintentar infinito
-    if (!ticket) return res.sendStatus(200);
-
-    // 4) Candado anti doble webhook para STOCK (igual que tú)
-    const isFirstApproval =
-      statusRaw === "approved" && ticket && ticket.statusPay !== "APPROVED";
-
-    if (isFirstApproval) {
-      for (const item of ticket.cart) {
-        // OJO: en tu carrito usas item.quantity en webhook
-        await productService.discountStock(item._id, item.quantity);
-      }
-    }
-
-    // 5) Actualizar statusPay en Mongo (igual que tú)
-    await ticketsModel.updateOne(
-      { code: serialOrden },
-      { $set: { statusPay: statusPayUpper } }
-    );
-
-    // ----------------------------
-    // ✅ MEJORA ROBUSTA: CANDADO DE EMAIL (idempotencia)
-    // ----------------------------
-    // Generamos una llave única por pago + estado
-    const notifKey = `MP:${mpReference}:STATUS:${statusPayUpper}`;
-
-    // Intentamos "reclamar" el envío del correo UNA sola vez:
-    // - Solo el primer webhook que logre agregar notifKey envía el email.
-    // - Si ya estaba, NO enviamos correo duplicado.
-    const claimed = await ticketsModel.findOneAndUpdate(
-      { code: serialOrden, paymentNotifs: { $ne: notifKey } },
-      { $addToSet: { paymentNotifs: notifKey } },
-      { new: true }
-    );
-
-    // Si NO pudo reclamar, significa que ya se envió antes (o está en proceso).
-    // Igual respondemos 200 y salimos.
-    if (!claimed) return res.sendStatus(200);
-
-    // Helpers (igual que tú)
-    const formatMoney = (value, cur) => {
-      if (typeof value !== "number") return "N/A";
-      try {
-        return new Intl.NumberFormat("es-CO", {
-          style: "currency",
-          currency: cur,
-          maximumFractionDigits: 0,
-        }).format(value);
-      } catch {
-        return `${value} ${cur}`;
-      }
-    };
-
-    const paymentTypeHuman =
-      paymentType === "credit_card"
-        ? "crédito"
-        : paymentType === "debit_card"
-        ? "débito"
-        : paymentType === "bank_transfer"
-        ? "transferencia"
-        : paymentType;
-
-    const medioPagoTexto = `${String(paymentMethodId).toUpperCase()} (${paymentTypeHuman})`;
-
-    const statusUI = (() => {
-      if (statusRaw === "approved")
-        return { label: "APROBADO", bg: "#e8fff1", fg: "#1e7a3a", border: "#b7efc5" };
-      if (statusRaw === "pending" || statusRaw === "in_process")
-        return { label: "PENDIENTE", bg: "#fff8e6", fg: "#8a5b00", border: "#ffe1a6" };
-      if (statusRaw === "rejected" || statusRaw === "cancelled")
-        return { label: "RECHAZADO", bg: "#ffecec", fg: "#a81818", border: "#ffb3b3" };
-      return { label: statusRaw.toUpperCase(), bg: "#eef2ff", fg: "#2b3a8f", border: "#c7d2fe" };
-    })();
-
-    const mensajeEstado = (() => {
-      if (statusRaw === "approved") {
-        return `
+      const mensajeEstado = (() => {
+        if (statusRaw === "approved") {
+          return `
           <p class="medio centerText">
             ¡Gracias por tu compra y por confiar en nosotros! 🚴‍♂️💚
           </p>
@@ -524,10 +539,10 @@ class TicketController {
             Si necesitas ayuda, abajo está el botón de WhatsApp.
           </p>
         `;
-      }
+        }
 
-      if (statusRaw === "pending" || statusRaw === "in_process") {
-        return `
+        if (statusRaw === "pending" || statusRaw === "in_process") {
+          return `
           <p class="medio centerText">
             Tu pago se encuentra en revisión ⏳.
           </p>
@@ -535,10 +550,10 @@ class TicketController {
             Si tienes dudas, abajo está el botón de WhatsApp.
           </p>
         `;
-      }
+        }
 
-      if (statusRaw === "rejected" || statusRaw === "cancelled") {
-        return `
+        if (statusRaw === "rejected" || statusRaw === "cancelled") {
+          return `
           <p class="medio centerText">
             Tu pago no pudo ser procesado ❌.
           </p>
@@ -549,33 +564,38 @@ class TicketController {
             Si el problema persiste, abajo está el botón de WhatsApp y con gusto te ayudaremos.
           </p>
         `;
-      }
+        }
 
-      return `
+        return `
         <p class="medio centerText">
           Estamos procesando la información de tu pago. Si necesitas ayuda, abajo está el botón de WhatsApp.
         </p>
       `;
-    })();
+      })();
 
-    // 6) Generar PDF comprobante EN MEMORIA (igual que tú)
-    const pdfBuffer = await generarComprobantePagoPDF(
-      {
-        serialOrden,
-        referenciaMp: mpReference,
-        estado: statusRaw,
-        detalleEstado: statusDetail,
-        medioPago: medioPagoTexto,
-        monto: amount,
-        moneda: currency,
-        fecha: data?.date_approved || data?.date_created,
-        email: payerEmail,
-      },
-      ticket
-    );
+      // ✅ 5) Generar PDF comprobante EN MEMORIA (Buffer) - NO guarda nada
+      const pdfBuffer = await generarComprobantePagoPDF(
+        {
+          serialOrden,
+          referenciaMp: mpReference,
+          estado: statusRaw,
+          detalleEstado: statusDetail,
+          medioPago: medioPagoTexto,
+          monto: amount,
+          moneda: currency,
+          fecha: data?.date_approved || data?.date_created,
 
-    // 7) HTML del correo (igual que tú)
-    const html = `
+          // ✅ correo que debe recibir el comprobante:
+          email: buyerEmail,
+
+          // opcional: para que lo muestres si quieres dentro del PDF
+          payerEmail: payerEmail || "N/A",
+        },
+        ticket
+      );
+
+      // 6) HTML del correo (TU HTML COMPLETO)
+      const html = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -714,7 +734,10 @@ class TicketController {
         <div class="card">
           <div class="badgeWrap">
             <span class="badge">${statusUI.label}</span>
-            ${statusDetail ? `<div class="small">Detalle: <strong>${statusDetail}</strong></div>` : ``}
+            ${statusDetail
+          ? `<div class="small">Detalle: <strong>${statusDetail}</strong></div>`
+          : ``
+        }
           </div>
 
           <div class="grid">
@@ -755,7 +778,7 @@ class TicketController {
             <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Ffacebook.png?alt=media&token=280b1d07-9e9d-4008-b5d2-f34d4063ac0e" class="iconos" alt="Facebook logo">
           </a>
           <a href="https://www.tiktok.com" target="_blank">
-            <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Ftik-tok.png?alt=media&token=7873d524e06c" class="iconos" alt="Tik Tok logo">
+            <img src="https://firebasestorage.googleapis.com/v0/b/ciclopista.appspot.com/o/decorative%2Ftik-tok.png?alt=media&token=2bc42a56-917f-437d-a445-7873d524e06c" class="iconos" alt="Tik Tok logo">
           </a>
         </div>
 
@@ -773,31 +796,27 @@ class TicketController {
 </html>
 `;
 
-    // 8) Enviar correo por Resend (reemplazo de nodemailer)
-    await sendEmailWithPdfResend({
-      to: `${payerEmail},${entorno.GOOGLE_MAIL}`,
-      subject: `Estado de pago - Orden ${serialOrden || "N/A"}`,
-      html,
-      pdfBuffer,
-      filename: `comprobante-pago-orden-${serialOrden || "N-A"}.pdf`,
-    });
+      // ✅ 7) Enviar correo + adjuntar PDF por Resend al correo del comprador (ticket.purchaser)
+      await sendEmailWithPdfResend({
+        to: `${buyerEmail},${entorno.GOOGLE_MAIL}`,
+        subject: `Estado de pago - Orden ${serialOrden || "N/A"}`,
+        html,
+        pdfBuffer,
+        filename: `comprobante-pago-orden-${serialOrden || "N-A"}.pdf`,
+      });
 
-    return res.sendStatus(200);
-  } catch (error) {
-    req.logger?.error({
-      message: "Webhook MercadoPago error",
-      cause: error,
-      Date: new Date().toLocaleTimeString(),
-      stack: JSON.stringify(error?.stack || error, null, 2),
-    });
+      return res.sendStatus(200);
+    } catch (error) {
+      req.logger?.error({
+        message: "Webhook MercadoPago error",
+        cause: error,
+        Date: new Date().toLocaleTimeString(),
+        stack: JSON.stringify(error?.stack || error, null, 2),
+      });
 
-    return res.sendStatus(200);
+      return res.sendStatus(200);
+    }
   }
-}
-
-
-
-
 
 
 }
