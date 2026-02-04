@@ -22,14 +22,19 @@ import generarComprobantePagoPDF from "../utils/pdfPayService.js";
 import { MercadoPagoConfig } from "mercadopago";
 
 const transport = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
   port: 587,
-  secure: false, // Asegúrate de que esto sea falso para el puerto 587
+  secure: false, // 587 = STARTTLS
   auth: {
     user: entorno.GOOGLE_MAIL,
-    pass: entorno.GOOGLE_PASS,
+    pass: entorno.GOOGLE_PASS, // debe ser App Password si es Gmail
   },
+  requireTLS: true,
+  connectionTimeout: 20000,
+  greetingTimeout: 20000,
+  socketTimeout: 20000,
 });
+
 
 class TicketController {
   async getTickets(req, res) {
