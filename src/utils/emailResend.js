@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import { entorno } from "../config";
+import { entorno } from "../config.js";
 
 if (!entorno.RESEND_API_KEY) {
   console.error("FALTA RESEND_API_KEY en el entorno");
