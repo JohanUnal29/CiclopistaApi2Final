@@ -1,6 +1,7 @@
 import passport from "passport";
 import express from "express";
 import { lastSessionService } from "../DAO/mongo/services/lastSession.service.js";
+import { entorno } from "../config.js";
 export const sessionGoogleRouter = express.Router();
 
 sessionGoogleRouter.get("/error-auth", (req, res) => {
@@ -104,7 +105,7 @@ sessionGoogleRouter.get("/logout", async (req, res) => {
       if (err) {
         return res.send({ status: "Error", error: "No se pudo cerrar" });
       }
-      return res.redirect("https://ciclopistafront.onrender.com");
+      return res.redirect(`${entorno.FRONT_URL}`);
     });
   } catch (error) {
     console.error("Error:", error);
